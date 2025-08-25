@@ -1,0 +1,7 @@
+services:
+  csv-chatbot:
+    container_name: csv-chatbot
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8501:8501"

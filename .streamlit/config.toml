@@ -1,0 +1,7 @@
+[theme]
+base = "dark"
+primaryColor = "#89CFF0"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
