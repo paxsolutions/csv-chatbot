@@ -8,9 +8,9 @@ import random
 import logging
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from langchain.document_loaders.csv_loader import CSVLoader
-from langchain.vectorstores import FAISS
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_community.document_loaders.csv_loader import CSVLoader
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 import streamlit as st
@@ -123,28 +123,30 @@ class Embedder:
             cache_filename = f"{filename}_{file_hash}"
 
             with open(f'{log_dir}/embedder.log', 'a') as f:
-                f.write(f"STEP: Checking for cached file: {cache_filename}.pkl\n")
+                f.write(f"STEP: Checking for cached directory: {cache_filename}\n")
 
-            # Check if cached version exists
-            if os.path.isfile(f"{self.PATH}/{cache_filename}.pkl"):
+            # Check if cached version exists (FAISS format)
+            cache_path = f"{self.PATH}/{cache_filename}"
+            if os.path.isdir(cache_path):
                 st.info("Using cached embeddings for faster loading...")
                 with open(f'{log_dir}/embedder.log', 'a') as f:
-                    f.write(f"STEP: Found cached file, loading...\n")
+                    f.write(f"STEP: Found cached directory, loading...\n")
                 try:
-                    with open(f"{self.PATH}/{cache_filename}.pkl", "rb") as f:
-                        cached_vectors = pickle.load(f)
+                    embeddings = OpenAIEmbeddings()
+                    cached_vectors = FAISS.load_local(cache_path, embeddings, allow_dangerous_deserialization=True)
                     with open(f'{log_dir}/embedder.log', 'a') as f:
-                        f.write(f"SUCCESS: Cached file loaded successfully\n")
+                        f.write(f"SUCCESS: Cached vectors loaded successfully\n")
                     return cached_vectors
                 except Exception as e:
-                    error_msg = f"Cached file corrupted: {str(e)}"
+                    error_msg = f"Cached vectors corrupted: {str(e)}"
                     with open(f'{log_dir}/embedder.log', 'a') as f:
                         f.write(f"ERROR: {error_msg}\n")
-                        f.write(f"STEP: Removing corrupted cache file and regenerating\n")
-                    st.warning("Cached file corrupted, regenerating embeddings...")
-                    # Remove corrupted cache file
+                        f.write(f"STEP: Removing corrupted cache and regenerating\n")
+                    st.warning("Cached vectors corrupted, regenerating embeddings...")
+                    # Remove corrupted cache directory
                     try:
-                        os.remove(f"{self.PATH}/{cache_filename}.pkl")
+                        import shutil
+                        shutil.rmtree(cache_path)
                     except:
                         pass
 
@@ -225,13 +227,21 @@ class Embedder:
             with open(f'{log_dir}/embedder.log', 'a') as f:
                 f.write(f"STEP: _create_embeddings_single_batch returned: {type(all_vectors)}\n")
 
-            # Save cache
-            with open(f"{self.PATH}/{cache_filename}.pkl", "wb") as f:
-                pickle.dump(all_vectors, f)
+            # Save cache using FAISS's built-in save method
+            try:
+                cache_path = f"{self.PATH}/{cache_filename}"
+                all_vectors.save_local(cache_path)
 
-            # Also save original filename
-            with open(f"{self.PATH}/{filename}.pkl", "wb") as f:
-                pickle.dump(all_vectors, f)
+                # Also save with original filename
+                original_path = f"{self.PATH}/{filename.replace('.csv', '')}"
+                all_vectors.save_local(original_path)
+
+                with open(f'{log_dir}/embedder.log', 'a') as f:
+                    f.write(f"SUCCESS: Saved vectors to cache using FAISS save_local\n")
+            except Exception as e:
+                with open(f'{log_dir}/embedder.log', 'a') as f:
+                    f.write(f"WARNING: Failed to save cache: {str(e)}\n")
+                # Continue without caching if save fails
 
             # Return vectors
             return all_vectors
@@ -241,23 +251,44 @@ class Embedder:
 
     def _process_large_csv_optimized(self, df):
         """
-        Optimized processing for large CSV files with better performance
+        Optimized processing for large CSV files with better numerical accuracy
         """
         documents = []
-        chunk_size = 200
+        chunk_size = 50  # Smaller chunks for better accuracy
         columns = df.columns.tolist()
 
+        # Create a summary document with key statistics
+        summary_text = f"CSV SUMMARY:\nColumns: {', '.join(columns)}\nTotal rows: {len(df)}\n\n"
+
+        # Add numerical column summaries for better accuracy
+        for col in columns:
+            if df[col].dtype in ['int64', 'float64']:
+                max_val = df[col].max()
+                max_idx = df[col].idxmax()
+                max_product = df.loc[max_idx, 'Product_name'] if 'Product_name' in df.columns else 'N/A'
+                summary_text += f"{col} - Maximum: {max_val} (Product: {max_product})\n"
+
+        summary_doc = Document(
+            page_content=summary_text,
+            metadata={"source": "csv_summary", "type": "summary"}
+        )
+        documents.append(summary_doc)
+
+        # Process data in smaller chunks with headers
         for i in range(0, len(df), chunk_size):
             chunk_df = df.iloc[i:i + chunk_size]
-            chunk_text = f"Columns: {', '.join(columns)}\n\n"
-            chunk_text += chunk_df.to_csv(index=False, header=False)
+            chunk_text = f"DATA CHUNK {i//chunk_size + 1}:\n"
+            chunk_text += f"Columns: {', '.join(columns)}\n\n"
+            chunk_text += chunk_df.to_csv(index=False, header=True)
+
             doc = Document(
                 page_content=chunk_text,
                 metadata={
                     "source": f"csv_chunk_{i//chunk_size + 1}",
                     "rows": f"{i+1}-{min(i+chunk_size, len(df))}",
                     "total_rows": len(df),
-                    "columns": columns
+                    "columns": columns,
+                    "type": "data_chunk"
                 }
             )
             documents.append(doc)

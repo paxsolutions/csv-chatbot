@@ -4,7 +4,7 @@ import streamlit as st
 
 from modules.chatbot import Chatbot
 from modules.embedder import Embedder
-from langchain.callbacks import get_openai_callback
+from langchain_community.callbacks.manager import get_openai_callback
 
 
 class Utilities:

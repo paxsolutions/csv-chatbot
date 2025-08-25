@@ -5,8 +5,8 @@ from io import BytesIO
 from io import StringIO
 import sys
 import re
-from langchain.agents import create_csv_agent
-from langchain.chat_models import ChatOpenAI
+from langchain_experimental.agents import create_csv_agent
+from langchain_openai import ChatOpenAI
 from modules.history import ChatHistory
 from modules.layout import Layout
 from modules.utils import Utilities

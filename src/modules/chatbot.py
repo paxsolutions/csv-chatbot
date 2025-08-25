@@ -1,9 +1,9 @@
 import streamlit as st
 import tiktoken
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts.prompt import PromptTemplate
-from langchain.callbacks import get_openai_callback
+from langchain_community.callbacks.manager import get_openai_callback
 
 
 def count_tokens_chain(chain, query):
@@ -26,7 +26,13 @@ class Chatbot:
 
 Your role is to provide accurate, insightful, and actionable answers based on the provided CSV data context.
 
-INSTRUCTIONS:
+CRITICAL INSTRUCTIONS FOR NUMERICAL QUERIES:
+1. When asked for maximum, minimum, or highest/lowest values, carefully examine ALL data points in the context
+2. Always double-check numerical comparisons - don't assume the first match is correct
+3. For "highest" or "maximum" queries, scan through ALL values to find the true maximum
+4. Quote exact numbers from the data - never approximate or guess
+
+GENERAL INSTRUCTIONS:
 1. Analyze the context carefully to understand the data structure, columns, and relationships
 2. Provide specific, data-driven answers with exact values, percentages, or trends when possible
 3. If the context doesn't contain sufficient information, clearly state what's missing
@@ -42,6 +48,7 @@ USER QUESTION: {question}
 
 RESPONSE GUIDELINES:
 - Be specific and cite actual data points
+- For numerical queries, verify your answer by checking all relevant data points
 - Explain any calculations or reasoning
 - Highlight key insights or patterns
 - If data is incomplete, suggest what additional information would be helpful
@@ -97,7 +104,7 @@ Answer:"""
         try:
             # Force similarity search to avoid MMR dimension issues
             search_type = "similarity"  # Always use similarity to avoid dimension mismatches
-            num_docs = st.session_state.get("num_docs", 3)  # Reduce to 3 for stability
+            num_docs = st.session_state.get("num_docs", 8)  # Increase to 8 for better context
 
             search_kwargs = {"k": num_docs}
 
@@ -145,10 +152,10 @@ Answer:"""
             chain = ConversationalRetrievalChain.from_llm(
                 llm=llm,
                 condense_question_prompt=self.CONDENSE_QUESTION_PROMPT,
-                qa_prompt=self.QA_PROMPT,
                 retriever=self._get_enhanced_retriever(),
                 return_source_documents=False,  # Disable for speed
-                verbose=False
+                verbose=False,
+                combine_docs_chain_kwargs={"prompt": self.QA_PROMPT}
             )
 
             chain_input = {"question": query, "chat_history": st.session_state["history"]}
