@@ -17,23 +17,34 @@ Navigate to the project directory :
 
 `cd csv-chatbot`
 
-
 Create a virtual environment :
 ```bash
-python -m venv .venv
-.\.venv\Scripts\activate
+python -m venv .venv/chatbot && source .venv/chatbot/bin/activate
 ```
 
 Install the required dependencies in the virtual environment :
 
 `pip install -r requirements.txt`
 
-
 Launch the chat service locally :
 
-`streamlit run src/chatbot_csv.py`
+`streamlit run src/chatbot_csv.py --server.port=8501`
 
 #### That's it! The service is now up and running locally. 🤗
+
+## Docker 🐋
+
+Navigate to the project directory :
+
+`cd csv-chatbot`
+
+Build the Docker image :
+
+`docker-compose build`
+
+Run the Docker container :
+
+`docker-compose up`
 
 ## Information 📝:
 CSV Chatbot features a chatbot with memory and a CSV agent. The chatbot is specialized in discussing unique elements within the CSV with the user in a friendly and conversational manner.
