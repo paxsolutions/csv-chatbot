@@ -94,21 +94,29 @@ Answer:"""
         """
         Create an optimized retriever with responsive parameters
         """
-        search_type = st.session_state.get("search_type", "similarity")  # Default to faster similarity
-        num_docs = st.session_state.get("num_docs", 5)  # Reduce default for speed
+        try:
+            # Force similarity search to avoid MMR dimension issues
+            search_type = "similarity"  # Always use similarity to avoid dimension mismatches
+            num_docs = st.session_state.get("num_docs", 3)  # Reduce to 3 for stability
 
-        search_kwargs = {"k": num_docs}
+            search_kwargs = {"k": num_docs}
 
-        if search_type == "mmr":
-            search_kwargs.update({
-                "fetch_k": min(num_docs * 2, 15),  # Reduce fetch_k for speed
-                "lambda_mult": 0.8  # Higher lambda for more relevance focus
-            })
+            # Test the vector store with a simple query first
+            try:
+                test_results = self.vectors.similarity_search("test", k=1)
+                if not test_results:
+                    raise ValueError("Vector store returned no results")
+            except Exception as e:
+                st.error(f"Vector store test failed: {str(e)}")
+                raise ValueError(f"Vector store is corrupted: {str(e)}")
 
-        return self.vectors.as_retriever(
-            search_type=search_type,
-            search_kwargs=search_kwargs
-        )
+            return self.vectors.as_retriever(
+                search_type=search_type,
+                search_kwargs=search_kwargs
+            )
+        except Exception as e:
+            st.error(f"Retriever creation failed: {str(e)}")
+            raise e
 
     def conversational_chat(self, query):
         """

@@ -30,14 +30,14 @@ class Layout:
         """
         Displays the prompt form
         """
-        with st.form(key="my_form", clear_on_submit=True):
-            user_input = st.text_area(
+        with st.form(key="my_form", clear_on_submit=True, enter_to_submit=True):
+            user_input = st.text_input(
                 "Query:",
                 placeholder="Ask me anything about your data...",
                 key="input",
                 label_visibility="collapsed",
             )
-            submit_button = st.form_submit_button(label="Send")
+            submit_button = st.form_submit_button(label="Send", type="primary")
 
             is_ready = submit_button and user_input
         return is_ready, user_input

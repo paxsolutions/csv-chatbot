@@ -6,6 +6,7 @@ import hashlib
 import time
 import random
 import logging
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain.document_loaders.csv_loader import CSVLoader
 from langchain.vectorstores import FAISS
@@ -14,17 +15,46 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 import streamlit as st
 
-os.makedirs('/app/logs', exist_ok=True)
+
+cwd = os.getcwd()
+log_dir = f'{cwd}/logs'
+
+os.makedirs(log_dir, exist_ok=True)
+
+# Create log files if they don't exist
+log_files = [
+    'faiss_test.log',
+    'faiss_error.log',
+    'debug_error.log',
+    'debug_dimensions.log',
+    'debug_dimension_error.log'
+]
+
+for log_file in log_files:
+    log_path = f'{log_dir}/{log_file}'
+    if not os.path.exists(log_path):
+        with open(log_path, 'w') as f:
+            f.write('')
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/app/logs/embedder.log'),
+        logging.FileHandler(f'{log_dir}/embedder.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+def dependable_faiss_import():
+    """Import FAISS with fallback handling"""
+    try:
+        import faiss
+        return faiss
+    except ImportError:
+        st.error("FAISS not installed. Please install with: pip install faiss-cpu")
+        raise ImportError("FAISS library not found")
 
 
 class Embedder:
@@ -75,15 +105,59 @@ class Embedder:
         """
         Stores document embeddings using optimized processing for large files
         """
-        # Caching
-        file_hash = self._get_file_hash(file)
-        cache_filename = f"{filename}_{file_hash}"
+        # Log entry point
+        logger.info(f"Starting storeDocEmbeds for file: {filename}")
+        with open(f'{log_dir}/embedder.log', 'a') as f:
+            f.write(f"ENTRY: storeDocEmbeds called for {filename}\n")
 
-        # Check if cached version exists
-        if os.path.isfile(f"{self.PATH}/{cache_filename}.pkl"):
-            st.info("Using cached embeddings for faster loading...")
-            with open(f"{self.PATH}/{cache_filename}.pkl", "rb") as f:
-                return pickle.load(f)
+        try:
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: About to generate file hash\n")
+
+            # Caching
+            file_hash = self._get_file_hash(file)
+
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: File hash generated: {file_hash[:10]}...\n")
+
+            cache_filename = f"{filename}_{file_hash}"
+
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: Checking for cached file: {cache_filename}.pkl\n")
+
+            # Check if cached version exists
+            if os.path.isfile(f"{self.PATH}/{cache_filename}.pkl"):
+                st.info("Using cached embeddings for faster loading...")
+                with open(f'{log_dir}/embedder.log', 'a') as f:
+                    f.write(f"STEP: Found cached file, loading...\n")
+                try:
+                    with open(f"{self.PATH}/{cache_filename}.pkl", "rb") as f:
+                        cached_vectors = pickle.load(f)
+                    with open(f'{log_dir}/embedder.log', 'a') as f:
+                        f.write(f"SUCCESS: Cached file loaded successfully\n")
+                    return cached_vectors
+                except Exception as e:
+                    error_msg = f"Cached file corrupted: {str(e)}"
+                    with open(f'{log_dir}/embedder.log', 'a') as f:
+                        f.write(f"ERROR: {error_msg}\n")
+                        f.write(f"STEP: Removing corrupted cache file and regenerating\n")
+                    st.warning("Cached file corrupted, regenerating embeddings...")
+                    # Remove corrupted cache file
+                    try:
+                        os.remove(f"{self.PATH}/{cache_filename}.pkl")
+                    except:
+                        pass
+
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: No cached file found, proceeding with processing\n")
+
+        except Exception as e:
+            error_msg = f"Error in storeDocEmbeds caching: {str(e)}"
+            logger.error(error_msg)
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"ERROR: {error_msg}\n")
+            st.error(error_msg)
+            return None
 
         # Write the uploaded file to a temp file
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp_file:
@@ -91,9 +165,16 @@ class Embedder:
             tmp_file_path = tmp_file.name
 
         try:
+            # Log progress
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: Reading CSV file {filename}\n")
+
             # Read CSV with pandas and optimize for large files
             df = pd.read_csv(tmp_file_path, encoding="utf-8")
             df = self._sample_large_csv(df)
+
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: CSV loaded, shape: {df.shape}\n")
 
             if len(df) > 500:
                 documents = self._process_large_csv_optimized(df)
@@ -130,10 +211,19 @@ class Embedder:
                 return None
 
             # Create embeddings
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: Creating OpenAI embeddings instance\n")
+
             embeddings = OpenAIEmbeddings()
 
             # Process embeddings in single batch to avoid dimension issues
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: Calling _create_embeddings_single_batch with {len(split_docs)} documents\n")
+
             all_vectors = self._create_embeddings_single_batch(split_docs, embeddings)
+
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"STEP: _create_embeddings_single_batch returned: {type(all_vectors)}\n")
 
             # Save cache
             with open(f"{self.PATH}/{cache_filename}.pkl", "wb") as f:
@@ -208,10 +298,22 @@ class Embedder:
         """
         Create embeddings in a single batch to avoid dimension mismatch issues
         """
-        valid_docs = [doc for doc in split_docs if doc.page_content.strip()]
+        try:
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"ENTRY: _create_embeddings_single_batch with {len(split_docs)} docs\n")
 
-        if not valid_docs:
-            st.error("No valid documents to process")
+            valid_docs = [doc for doc in split_docs if doc.page_content.strip()]
+
+            if not valid_docs:
+                st.error("No valid documents to process")
+                with open(f'{log_dir}/embedder.log', 'a') as f:
+                    f.write(f"ERROR: No valid documents found\n")
+                return None
+        except Exception as e:
+            error_msg = f"Error in _create_embeddings_single_batch entry: {str(e)}"
+            with open(f'{log_dir}/embedder.log', 'a') as f:
+                f.write(f"ERROR: {error_msg}\n")
+            st.error(error_msg)
             return None
 
         max_docs = 100
@@ -232,32 +334,63 @@ class Embedder:
                 if len(test_embedding) != expected_dim:
                     st.warning(f"Unexpected embedding dimension: {len(test_embedding)} (expected {expected_dim})")
 
-            # Validate all documents
-            import numpy as np
+            # Validate all documents have content
+            filtered_docs = []
+            for doc in valid_docs:
+                if doc.page_content and len(doc.page_content.strip()) > 10:  # Minimum content length
+                    filtered_docs.append(doc)
 
-            texts = [doc.page_content for doc in valid_docs]
-            embeddings_list = embeddings.embed_documents(texts)
+            if not filtered_docs:
+                st.error("No valid documents with sufficient content found")
+                return None
 
-            # Validate dimensions
-            dimensions = [len(emb) for emb in embeddings_list]
-            unique_dims = set(dimensions)
+            st.info(f"Processing {len(filtered_docs)} valid documents")
 
-            if len(unique_dims) > 1:
-                st.error(f"Inconsistent embedding dimensions detected: {unique_dims}")
-                st.info("Using fallback method due to dimension inconsistency")
-                return self._create_embeddings_fallback(valid_docs, embeddings)
+            # Test with a small batch first to validate dimensions
+            test_batch = filtered_docs[:3] if len(filtered_docs) > 3 else filtered_docs
+            test_texts = [doc.page_content for doc in test_batch]
 
-            dimension = list(unique_dims)[0]
-            st.info(f"All embeddings have consistent dimension: {dimension}")
+            try:
+                test_embeddings = embeddings.embed_documents(test_texts)
+                test_dimensions = [len(emb) for emb in test_embeddings]
 
-            with st.spinner(f"Creating embeddings for {len(valid_docs)} documents..."):
-                # Create FAISS vectors
-                vectors = FAISS.from_documents(valid_docs, embeddings)
+                if len(set(test_dimensions)) > 1:
+                    st.error(f"Inconsistent test embedding dimensions: {set(test_dimensions)}")
+                    return self._create_embeddings_fallback(filtered_docs, embeddings)
+
+                expected_dim = test_dimensions[0]
+                st.info(f"Validated embedding dimension: {expected_dim}")
+
+            except Exception as e:
+                st.error(f"Test embedding failed: {str(e)}")
+                return self._create_embeddings_fallback(filtered_docs, embeddings)
+
+            with st.spinner(f"Creating embeddings for {len(filtered_docs)} documents..."):
+                try:
+                    with open(f'{log_dir}/embedder.log', 'a') as f:
+                        f.write(f"CRITICAL: About to call FAISS.from_documents with {len(filtered_docs)} docs\n")
+
+                    # Create FAISS vectors with validated documents
+                    vectors = FAISS.from_documents(filtered_docs, embeddings)
+
+                    with open(f'{log_dir}/embedder.log', 'a') as f:
+                        f.write(f"SUCCESS: FAISS.from_documents completed successfully\n")
+
+                except Exception as e:
+                    error_msg = f"FAISS creation failed: {str(e)}"
+                    with open(f'{log_dir}/embedder.log', 'a') as f:
+                        f.write(f"FAISS ERROR: {error_msg}\n")
+                        f.write(f"Exception type: {type(e).__name__}\n")
+                        f.write(f"Full traceback: {str(e)}\n")
+
+                    st.error(error_msg)
+                    st.info("Attempting fallback method...")
+                    return self._create_embeddings_fallback(filtered_docs, embeddings)
 
                 # Debug: Vector store
                 if vectors:
-                    st.success(f"Successfully created embeddings for {len(valid_docs)} documents!")
-                    st.info(f"Vector store created with {len(valid_docs)} documents, dimension: {dimension}")
+                    st.success(f"Successfully created embeddings for {len(filtered_docs)} documents!")
+                    st.info(f"Vector store created with {len(filtered_docs)} documents, dimension: {expected_dim}")
                 return vectors
 
         except Exception as e:
@@ -299,9 +432,6 @@ class Embedder:
             debug_info.append("=== EMBEDDING DIMENSION DEBUG ===")
             debug_info.append(f"Total documents to validate: {len(documents)}")
 
-            # Ensure logs directory exists
-            os.makedirs('/app/logs', exist_ok=True)
-
             # Test embedding creation for each document
             for i, doc in enumerate(documents):
                 try:
@@ -309,7 +439,7 @@ class Embedder:
                     embedding = embeddings.embed_query(content)
 
                     # Log to file
-                    with open('/app/logs/debug_dimensions.log', 'a') as f:
+                    with open(f'{log_dir}/debug_dimensions.log', 'a') as f:
                         f.write(f"Document {i}: content_length={len(content)}, embedding_length={len(embedding)}\n")
 
                     if not embedding:
@@ -347,8 +477,9 @@ class Embedder:
             debug_info.append(f"Documents with issues: {len(problematic_docs)}")
             debug_info.append(f"Problematic document indices: {problematic_docs}")
 
-            # Log to file
-            with open('/app/logs/debug_dimensions.log', 'a') as f:
+
+
+            with open(f'{log_dir}/debug_dimensions.log', 'a') as f:
                 f.write(f"Analysis complete:\n")
                 f.write(f"Unique dimensions: {sorted(unique_dims)}\n")
                 f.write(f"Problematic documents: {problematic_docs}\n")
@@ -363,7 +494,7 @@ class Embedder:
                 logging.error(error_msg)
 
                 # Additional detailed logging
-                with open('/app/logs/dimension_error.log', 'w') as f:
+                with open(f'{log_dir}/debug_dimension_error.log', 'w') as f:
                     f.write(f"DIMENSION MISMATCH ERROR\n")
                     f.write(f"Expected: 1536\n")
                     f.write(f"Found: {sorted(unique_dims)}\n")
@@ -390,7 +521,7 @@ class Embedder:
                     logging.info(faiss_success)
 
                     # Log FAISS test
-                    with open('/app/logs/faiss_test.log', 'w') as f:
+                    with open(f'{log_dir}/faiss_test.log', 'w') as f:
                         f.write(f"FAISS test successful\n")
                         f.write(f"Dimension: {dim}\n")
                         f.write(f"Test vectors shape: {test_vectors.shape}\n")
@@ -399,7 +530,7 @@ class Embedder:
                     faiss_error = f"FAISS compatibility test failed: {str(e)}"
                     logging.error(faiss_error)
 
-                    with open('/app/logs/faiss_error.log', 'w') as f:
+                    with open(f'{log_dir}/faiss_error.log', 'w') as f:
                         f.write(f"FAISS test failed: {str(e)}\n")
 
                     return False
@@ -410,7 +541,56 @@ class Embedder:
             error_msg = f"Debug validation failed: {str(e)}"
             logging.error(error_msg)
 
-            with open('/app/logs/debug_error.log', 'w') as f:
+            with open(f'{log_dir}/debug_error.log', 'w') as f:
                 f.write(f"Debug validation error: {str(e)}\n")
 
             return False
+
+    def _create_embeddings_fallback(self, documents, embeddings):
+        """
+        Fallback method for creating embeddings when the main method fails
+        """
+        try:
+            st.info("Using fallback embedding method...")
+
+            # Process documents in smaller batches
+            batch_size = 10
+            all_batches = []
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                valid_batch = [doc for doc in batch if doc.page_content.strip()]
+
+                if valid_batch:
+                    try:
+                        # Create embeddings for this batch
+                        batch_vectors = FAISS.from_documents(valid_batch, embeddings)
+                        all_batches.append(batch_vectors)
+                        st.info(f"Processed batch {i//batch_size + 1}/{(len(documents) + batch_size - 1)//batch_size}")
+                    except Exception as e:
+                        st.warning(f"Skipped batch {i//batch_size + 1} due to error: {str(e)}")
+                        continue
+
+            if not all_batches:
+                st.error("All batches failed to process")
+                return None
+
+            # Merge all successful batches
+            if len(all_batches) == 1:
+                return all_batches[0]
+
+            # Merge multiple batches
+            merged_vectors = all_batches[0]
+            for batch_vectors in all_batches[1:]:
+                try:
+                    merged_vectors.merge_from(batch_vectors)
+                except Exception as e:
+                    st.warning(f"Failed to merge batch: {str(e)}")
+                    continue
+
+            st.success(f"Successfully created embeddings using fallback method with {len(all_batches)} batches")
+            return merged_vectors
+
+        except Exception as e:
+            st.error(f"Fallback method also failed: {str(e)}")
+            return None
