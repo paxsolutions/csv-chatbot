@@ -192,10 +192,10 @@ class Embedder:
                 st.error("No valid documents found in CSV file.")
                 return None
 
-            # Text splitting
+            # Text splitting - optimized for numerical data preservation
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1200,  # Consistent chunk size
-                chunk_overlap=120,  # 10% overlap
+                chunk_size=2000,  # Larger chunks to preserve more context for numerical analysis
+                chunk_overlap=400,  # Higher overlap to ensure numerical data isn't split
                 length_function=len,
             )
 
@@ -251,47 +251,74 @@ class Embedder:
 
     def _process_large_csv_optimized(self, df):
         """
-        Optimized processing for large CSV files with better numerical accuracy
+        Process CSV files with comprehensive data coverage for accurate numerical analysis
         """
         documents = []
-        chunk_size = 50  # Smaller chunks for better accuracy
-        columns = df.columns.tolist()
 
-        # Create a summary document with key statistics
-        summary_text = f"CSV SUMMARY:\nColumns: {', '.join(columns)}\nTotal rows: {len(df)}\n\n"
+        # For small-medium datasets, create one comprehensive document
+        if len(df) <= 100:
+            full_text = f"Complete CSV Dataset:\n"
+            full_text += f"Columns: {', '.join(df.columns)}\n"
+            full_text += f"Total Rows: {len(df)}\n\n"
 
-        # Add numerical column summaries for better accuracy
-        for col in columns:
-            if df[col].dtype in ['int64', 'float64']:
-                max_val = df[col].max()
-                max_idx = df[col].idxmax()
-                max_product = df.loc[max_idx, 'Product_name'] if 'Product_name' in df.columns else 'N/A'
-                summary_text += f"{col} - Maximum: {max_val} (Product: {max_product})\n"
+            # Add all rows with clear formatting
+            for idx, row in df.iterrows():
+                row_text = f"Row {idx + 1}: "
+                row_items = []
+                for col in df.columns:
+                    value = row[col]
+                    if pd.notna(value):
+                        row_items.append(f"{col}={value}")
+                row_text += ", ".join(row_items)
+                full_text += row_text + "\n"
 
-        summary_doc = Document(
-            page_content=summary_text,
-            metadata={"source": "csv_summary", "type": "summary"}
-        )
-        documents.append(summary_doc)
+            # Add comprehensive numerical analysis
+            numerical_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numerical_cols) > 0:
+                full_text += f"\n=== NUMERICAL ANALYSIS ===\n"
+                for col in numerical_cols:
+                    col_data = df[col].dropna()
+                    if not col_data.empty:
+                        sorted_values = col_data.sort_values(ascending=False)
+                        full_text += f"\n{col} Statistics:\n"
+                        full_text += f"  Maximum: {col_data.max()}\n"
+                        full_text += f"  Minimum: {col_data.min()}\n"
+                        full_text += f"  Mean: {col_data.mean():.2f}\n"
+                        full_text += f"  Top 5 values: {sorted_values.head().tolist()}\n"
 
-        # Process data in smaller chunks with headers
-        for i in range(0, len(df), chunk_size):
-            chunk_df = df.iloc[i:i + chunk_size]
-            chunk_text = f"DATA CHUNK {i//chunk_size + 1}:\n"
-            chunk_text += f"Columns: {', '.join(columns)}\n\n"
-            chunk_text += chunk_df.to_csv(index=False, header=True)
+            documents.append(Document(page_content=full_text))
+            return documents
 
-            doc = Document(
-                page_content=chunk_text,
-                metadata={
-                    "source": f"csv_chunk_{i//chunk_size + 1}",
-                    "rows": f"{i+1}-{min(i+chunk_size, len(df))}",
-                    "total_rows": len(df),
-                    "columns": columns,
-                    "type": "data_chunk"
-                }
-            )
-            documents.append(doc)
+        # For larger datasets, use overlapping chunks
+        chunk_size = 25
+        overlap = 5
+
+        for i in range(0, len(df), chunk_size - overlap):
+            chunk_df = df.iloc[i:i+chunk_size]
+
+            chunk_text = f"CSV Data Chunk {i//(chunk_size-overlap) + 1} (Rows {i+1}-{min(i+chunk_size, len(df))}):\n"
+            chunk_text += f"Columns: {', '.join(df.columns)}\n\n"
+
+            for idx, row in chunk_df.iterrows():
+                row_text = f"Row {idx + 1}: "
+                row_items = []
+                for col in df.columns:
+                    value = row[col]
+                    if pd.notna(value):
+                        row_items.append(f"{col}={value}")
+                row_text += ", ".join(row_items)
+                chunk_text += row_text + "\n"
+
+            # Add numerical summaries
+            numerical_cols = df.select_dtypes(include=[np.number]).columns
+            if len(numerical_cols) > 0:
+                chunk_text += f"\nNumerical Summary for this chunk:\n"
+                for col in numerical_cols:
+                    chunk_data = chunk_df[col]
+                    if not chunk_data.empty:
+                        chunk_text += f"{col}: min={chunk_data.min()}, max={chunk_data.max()}, mean={chunk_data.mean():.2f}\n"
+
+            documents.append(Document(page_content=chunk_text))
 
         return documents
 

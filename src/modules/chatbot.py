@@ -27,10 +27,19 @@ class Chatbot:
 Your role is to provide accurate, insightful, and actionable answers based on the provided CSV data context.
 
 CRITICAL INSTRUCTIONS FOR NUMERICAL QUERIES:
-1. When asked for maximum, minimum, or highest/lowest values, carefully examine ALL data points in the context
-2. Always double-check numerical comparisons - don't assume the first match is correct
-3. For "highest" or "maximum" queries, scan through ALL values to find the true maximum
-4. Quote exact numbers from the data - never approximate or guess
+1. When asked for maximum, minimum, or highest/lowest values, YOU MUST examine EVERY SINGLE data point in the context
+2. NEVER stop at the first match - systematically compare ALL numerical values
+3. For "highest" or "maximum" queries, create a mental list of ALL values and identify the true maximum
+4. For quantity/units ordered queries, look at the "Qty_ordered" column specifically
+5. Quote exact numbers from the data - never approximate or guess
+6. When comparing numbers, explicitly state: "I found X with Y units, Z with W units, etc., therefore the highest is..."
+
+SYSTEMATIC ANALYSIS PROCESS:
+1. Identify the relevant column (e.g., Qty_ordered for quantity questions)
+2. Extract ALL values from that column in the provided context
+3. Compare each value systematically
+4. Identify the true maximum/minimum
+5. Verify by double-checking your comparison
 
 GENERAL INSTRUCTIONS:
 1. Analyze the context carefully to understand the data structure, columns, and relationships
@@ -48,8 +57,9 @@ USER QUESTION: {question}
 
 RESPONSE GUIDELINES:
 - Be specific and cite actual data points
-- For numerical queries, verify your answer by checking all relevant data points
-- Explain any calculations or reasoning
+- For numerical queries, SYSTEMATICALLY verify your answer by checking ALL relevant data points
+- Show your work: "I examined all products and found: Product A (X units), Product B (Y units), Product C (Z units)..."
+- Explain any calculations or reasoning step by step
 - Highlight key insights or patterns
 - If data is incomplete, suggest what additional information would be helpful
 - Use clear, professional language while remaining conversational
@@ -99,12 +109,13 @@ Answer:"""
 
     def _get_enhanced_retriever(self):
         """
-        Create an optimized retriever with responsive parameters
+        Create an optimized retriever with comprehensive data coverage
         """
         try:
             # Force similarity search to avoid MMR dimension issues
-            search_type = "similarity"  # Always use similarity to avoid dimension mismatches
-            num_docs = st.session_state.get("num_docs", 8)  # Increase to 8 for better context
+            search_type = "similarity"
+            # Maximize retrieval for comprehensive analysis - get ALL available chunks
+            num_docs = 50  # Much higher to ensure we capture all data
 
             search_kwargs = {"k": num_docs}
 
