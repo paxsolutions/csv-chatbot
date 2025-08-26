@@ -2,10 +2,16 @@ import streamlit as st
 
 
 class Sidebar:
-    MODEL_OPTIONS = ["gpt-4", "gpt-4-turbo"]
+    MODEL_OPTIONS = [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo"
+    ]
     TEMPERATURE_MIN_VALUE = 0.0
     TEMPERATURE_MAX_VALUE = 1.0
-    TEMPERATURE_DEFAULT_VALUE = 0.1
+    TEMPERATURE_DEFAULT_VALUE = 1.0
     TEMPERATURE_STEP = 0.01
 
     @staticmethod
@@ -14,7 +20,7 @@ class Sidebar:
         sections = [
             "#### Chatbot is an AI chatbot featuring conversational memory, designed to enable users to discuss their CSV data in a more intuitive manner. 📄",
             "#### It employs large language models to provide users with seamless, context-aware natural language interactions for a better understanding of their CSV data. 🌐",
-            "#### Powered by [Langchain](https://github.com/hwchase17/langchain), [OpenAI](https://platform.openai.com/docs/models/gpt-3-5) and [Streamlit](https://github.com/streamlit/streamlit) ⚡",
+            "#### Powered by [Langchain](https://github.com/hwchase17/langchain), [OpenAI](https://platform.openai.com/docs/models/o4-mini) and [Streamlit](https://github.com/streamlit/streamlit) ⚡",
         ]
         for section in sections:
             about.write(section)
@@ -29,7 +35,7 @@ class Sidebar:
         model = st.selectbox(
             label="Model",
             options=self.MODEL_OPTIONS,
-            help="GPT-4 provides better analysis but is slower. GPT-4-turbo offers the best balance."
+            help="GPT-4o-mini: Fast and cost-effective. GPT-4o: Latest model with best performance. GPT-4-turbo: Good balance of speed and quality."
         )
         st.session_state["model"] = model
 

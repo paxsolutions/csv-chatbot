@@ -1,5 +1,4 @@
 import os
-import pickle
 import tempfile
 import pandas as pd
 import hashlib
@@ -7,7 +6,6 @@ import time
 import random
 import logging
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -352,9 +350,13 @@ class Embedder:
                     return None
         return None
 
+    def _estimate_tokens(self, text):
+        """Estimate token count for text (roughly 4 chars per token)"""
+        return len(text) // 4
+
     def _create_embeddings_single_batch(self, split_docs, embeddings):
         """
-        Create embeddings in a single batch to avoid dimension mismatch issues
+        Create embeddings with token-aware batching to avoid API limits
         """
         try:
             with open(f'{log_dir}/embedder.log', 'a') as f:
@@ -374,104 +376,78 @@ class Embedder:
             st.error(error_msg)
             return None
 
-        max_docs = 100
-        if len(valid_docs) > max_docs:
-            st.info(f"Processing first {max_docs} documents for stability")
+        # Token-aware batching
+        max_tokens_per_batch = 250000  # Safe limit below 300k
+        batches = []
+        current_batch = []
+        current_tokens = 0
 
-        try:
-            # Debug
-            st.info("Testing embedding dimensions...")
+        for doc in valid_docs:
+            doc_tokens = self._estimate_tokens(doc.page_content)
 
-            # Test embedding
-            if valid_docs:
-                test_embedding = embeddings.embed_query(valid_docs[0].page_content[:100])
-                st.info(f"OpenAI embedding dimension: {len(test_embedding)}")
+            if current_tokens + doc_tokens > max_tokens_per_batch and current_batch:
+                batches.append(current_batch)
+                current_batch = [doc]
+                current_tokens = doc_tokens
+            else:
+                current_batch.append(doc)
+                current_tokens += doc_tokens
 
-                # Validate dimension
-                expected_dim = 1536
-                if len(test_embedding) != expected_dim:
-                    st.warning(f"Unexpected embedding dimension: {len(test_embedding)} (expected {expected_dim})")
+        if current_batch:
+            batches.append(current_batch)
 
-            # Validate all documents have content
-            filtered_docs = []
-            for doc in valid_docs:
-                if doc.page_content and len(doc.page_content.strip()) > 10:  # Minimum content length
-                    filtered_docs.append(doc)
+        with open(f'{log_dir}/embedder.log', 'a') as f:
+            f.write(f"STEP: Split into {len(batches)} token-aware batches\n")
 
-            if not filtered_docs:
-                st.error("No valid documents with sufficient content found")
-                return None
+        st.info(f"Processing {len(valid_docs)} documents in {len(batches)} batches")
 
-            st.info(f"Processing {len(filtered_docs)} valid documents")
+        # Process batches sequentially
+        all_vectors = None
 
-            # Test with a small batch first to validate dimensions
-            test_batch = filtered_docs[:3] if len(filtered_docs) > 3 else filtered_docs
-            test_texts = [doc.page_content for doc in test_batch]
-
-            try:
-                test_embeddings = embeddings.embed_documents(test_texts)
-                test_dimensions = [len(emb) for emb in test_embeddings]
-
-                if len(set(test_dimensions)) > 1:
-                    st.error(f"Inconsistent test embedding dimensions: {set(test_dimensions)}")
-                    return self._create_embeddings_fallback(filtered_docs, embeddings)
-
-                expected_dim = test_dimensions[0]
-                st.info(f"Validated embedding dimension: {expected_dim}")
-
-            except Exception as e:
-                st.error(f"Test embedding failed: {str(e)}")
-                return self._create_embeddings_fallback(filtered_docs, embeddings)
-
-            with st.spinner(f"Creating embeddings for {len(filtered_docs)} documents..."):
+        for i, batch in enumerate(batches):
+            with st.spinner(f"Processing batch {i+1}/{len(batches)} ({len(batch)} documents)..."):
                 try:
                     with open(f'{log_dir}/embedder.log', 'a') as f:
-                        f.write(f"CRITICAL: About to call FAISS.from_documents with {len(filtered_docs)} docs\n")
+                        f.write(f"STEP: Processing batch {i+1} with {len(batch)} docs\n")
 
-                    # Create FAISS vectors with validated documents
-                    vectors = FAISS.from_documents(filtered_docs, embeddings)
+                    if all_vectors is None:
+                        # First batch - create initial FAISS index
+                        all_vectors = FAISS.from_documents(batch, embeddings)
+                        with open(f'{log_dir}/embedder.log', 'a') as f:
+                            f.write(f"SUCCESS: Created initial FAISS index with batch {i+1}\n")
+                    else:
+                        # Subsequent batches - create separate index and merge
+                        batch_vectors = FAISS.from_documents(batch, embeddings)
+                        all_vectors.merge_from(batch_vectors)
+                        with open(f'{log_dir}/embedder.log', 'a') as f:
+                            f.write(f"SUCCESS: Merged batch {i+1} into main index\n")
 
-                    with open(f'{log_dir}/embedder.log', 'a') as f:
-                        f.write(f"SUCCESS: FAISS.from_documents completed successfully\n")
+                    # Add small delay between batches to avoid rate limits
+                    if i < len(batches) - 1:
+                        time.sleep(1)
 
                 except Exception as e:
-                    error_msg = f"FAISS creation failed: {str(e)}"
+                    error_msg = f"Batch {i+1} failed: {str(e)}"
                     with open(f'{log_dir}/embedder.log', 'a') as f:
-                        f.write(f"FAISS ERROR: {error_msg}\n")
-                        f.write(f"Exception type: {type(e).__name__}\n")
-                        f.write(f"Full traceback: {str(e)}\n")
+                        f.write(f"ERROR: {error_msg}\n")
 
-                    st.error(error_msg)
-                    st.info("Attempting fallback method...")
-                    return self._create_embeddings_fallback(filtered_docs, embeddings)
+                    if "max_tokens_per_request" in str(e):
+                        st.error(f"Batch {i+1} still too large. Skipping this batch.")
+                        continue
+                    else:
+                        st.error(error_msg)
+                        return None
 
-                # Debug: Vector store
-                if vectors:
-                    st.success(f"Successfully created embeddings for {len(filtered_docs)} documents!")
-                    st.info(f"Vector store created with {len(filtered_docs)} documents, dimension: {expected_dim}")
-                return vectors
+        if all_vectors is None:
+            st.error("Failed to create any embeddings")
+            return None
 
-        except Exception as e:
-            error_msg = str(e)
-            st.error(f"Failed to create embeddings: {error_msg}")
+        # Success - return the combined vectors
+        with open(f'{log_dir}/embedder.log', 'a') as f:
+            f.write(f"SUCCESS: Combined all batches into final FAISS index\n")
 
-            # Debug: Log detailed error info
-            if "columns" in error_msg.lower() and "dimension" in error_msg.lower():
-                st.error("Dimension mismatch detected - this indicates inconsistent embedding sizes")
-                st.info("Attempting to validate all document embeddings...")
-
-                # Try to identify problematic docs
-                if self._debug_embedding_dimensions(valid_docs, embeddings):
-                    st.info("All dimensions consistent, retrying with fallback method...")
-                else:
-                    st.warning("Inconsistent dimensions found, attempting fallback...")
-
-                # Attempt fallback method
-                return self._create_embeddings_fallback(valid_docs, embeddings)
-
-            # For other errors, try fallback
-            st.info("Attempting fallback embedding method...")
-            return self._create_embeddings_fallback(valid_docs, embeddings)
+        st.success(f"Successfully created embeddings for {len(valid_docs)} documents!")
+        return all_vectors
 
     def _process_large_csv(self, df):
         """

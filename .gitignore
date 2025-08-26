@@ -136,7 +136,8 @@ cython_debug/
 .venv
 
 *.pkl
-*.csv
+# *.csv
 .DS_Store
-data
+# data
 jupyter
+embeddings/

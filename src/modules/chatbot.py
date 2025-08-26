@@ -73,7 +73,7 @@ Answer:"""
         self.temperature = temperature
         self.vectors = vectors
 
-    def _estimate_tokens(self, text, model_name="gpt-3.5-turbo"):
+    def _estimate_tokens(self, text, model_name="gpt-4o-mini"):
         """
         Estimate token count for a given text
         """
